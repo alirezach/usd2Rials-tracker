@@ -10,13 +10,18 @@ import re
 import json
 import subprocess
 from pathlib import Path
+import time
 
 class USD2RialsUpdater:
     def __init__(self, csv_file_path="USD2Rials.csv"):
         self.csv_file_path = csv_file_path
         self.url = "https://www.tgju.org/profile/price_dollar_rl/history"
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1'
         }
     
     def normalize_gregorian_date(self, date_str: str) -> str:
@@ -50,51 +55,102 @@ class USD2RialsUpdater:
             return f"{parsed.month}/{parsed.day}/{parsed.year}"
         return date_str
 
-    def fetch_latest_price(self):
+    def fetch_latest_price(self, max_retries=3):
         """از وبسایت tgju آخرین قیمت دلار را دریافت می‌کند"""
-        try:
-            response = requests.get(self.url, headers=self.headers, timeout=30)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # پیدا کردن جدول تاریخچه قیمت
-            table = soup.find('table', {'class': 'table widgets-dataTable table-hover text-center history-table'})
-            if not table:
-                raise ValueError("جدول قیمت در وبسایت پیدا نشد")
-            
-            # پیدا کردن اولین ردیف داده (بدون هدر)
-            first_row = table.find('tbody').find('tr')
-            if not first_row:
-                raise ValueError("هیچ ردیف داده‌ای در جدول پیدا نشد")
-            
-            cells = first_row.find_all('td')
-            if len(cells) < 8:
-                raise ValueError("تعداد ستون‌های مورد انتظار در جدول پیدا نشد")
-            
-            # استخراج داده‌ها از ردیف اول
-            # ترتیب: بیشترین، کمترین، بیشترین، میانگین، تغییر، درصد تغییر، تاریخ میلادی، تاریخ شمسی
-            min_price_text = cells[1].get_text(strip=True)  # کمترین قیمت
-            max_price_text = cells[2].get_text(strip=True)  # بیشترین قیمت
-            raw_gregorian_date = cells[6].get_text(strip=True)  # تاریخ میلادی (خام از سایت)
-            gregorian_date = self.normalize_gregorian_date(raw_gregorian_date)  # نرمال‌سازی به Month/Day/Year (M/D/YYYY)
-            persian_date = cells[7].get_text(strip=True)    # تاریخ شمسی
-            
-            # تبدیل قیمت‌ها به عدد
-            min_price = int(min_price_text.replace(',', ''))
-            max_price = int(max_price_text.replace(',', ''))
-            avg_price = (min_price + max_price) // 2
-            
-            return {
-                'date_pr': persian_date,
-                'date_gr': gregorian_date,
-                'source': 'tgju',
-                'price_avg': avg_price
-            }
-            
-        except Exception as e:
-            print(f"خطا در دریافت اطلاعات از وبسایت: {str(e)}")
-            return None
+        for attempt in range(max_retries):
+            try:
+                print(f"تلاش {attempt + 1}/{max_retries} برای دریافت از {self.url}")
+                response = requests.get(self.url, headers=self.headers, timeout=15)
+                
+                print(f"📡 Status Code: {response.status_code}")
+                
+                if response.status_code == 404:
+                    print("❌ 404 - صفحه پیدا نشد")
+                    if attempt == max_retries - 1:
+                        print("🔄 تلاش URL جایگزین...")
+                        self.url = "https://www.tgju.org/chart/price_dollar_rl/trading"
+                        continue
+                elif response.status_code == 403:
+                    print("❌ 403 - دسترسی رد شد")
+                    if attempt < max_retries - 1:
+                        print(f"⏳ صبر 5 ثانیه...")
+                        time.sleep(5)
+                        continue
+                
+                response.raise_for_status()
+                
+                soup = BeautifulSoup(response.content, 'html.parser')
+                
+                # پیدا کردن جدول تاریخچه قیمت
+                table = soup.find('table', {'class': 'table widgets-dataTable table-hover text-center history-table'})
+                if not table:
+                    # جستجوی جایگزین
+                    tables = soup.find_all('table', {'class': re.compile(r'.*history-table.*')})
+                    if tables:
+                        table = tables[0]
+                        print(f"✅ جدول با regex پیدا شد")
+                    else:
+                        raise ValueError("جدول قیمت در وبسایت پیدا نشد")
+                
+                tbody = table.find('tbody')
+                if not tbody:
+                    raise ValueError("tbody در جدول پیدا نشد")
+                
+                # پیدا کردن اولین ردیف داده (بدون هدر)
+                first_row = tbody.find('tr')
+                if not first_row:
+                    raise ValueError("هیچ ردیف داده‌ای در جدول پیدا نشد")
+                
+                cells = first_row.find_all('td')
+                if len(cells) < 8:
+                    print(f"⚠️ تعداد ستون‌ها: {len(cells)} (انتظار ≥8)")
+                    for i, cell in enumerate(cells):
+                        print(f"  ستون {i}: {cell.get_text(strip=True)[:50]}")
+                    raise ValueError(f"تعداد ستون‌های کافی پیدا نشد ({len(cells)})")
+                
+                # استخراج داده‌ها از ردیف اول
+                min_price_text = cells[1].get_text(strip=True)
+                max_price_text = cells[2].get_text(strip=True)
+                raw_gregorian_date = cells[6].get_text(strip=True)
+                gregorian_date = self.normalize_gregorian_date(raw_gregorian_date)
+                persian_date = cells[7].get_text(strip=True)
+                
+                print(f"✅ داده استخراج شد:")
+                print(f"   تاریخ شمسی: {persian_date}")
+                print(f"   تاریخ میلادی: {gregorian_date}")
+                print(f"   کمترین: {min_price_text}")
+                print(f"   بیشترین: {max_price_text}")
+                
+                # تبدیل قیمت‌ها به عدد
+                min_price = int(min_price_text.replace(',', ''))
+                max_price = int(max_price_text.replace(',', ''))
+                avg_price = (min_price + max_price) // 2
+                
+                return {
+                    'date_pr': persian_date,
+                    'date_gr': gregorian_date,
+                    'source': 'tgju',
+                    'price_avg': avg_price
+                }
+                
+            except requests.exceptions.Timeout:
+                print(f"⏱️ Timeout - صبر {5 * (attempt + 1)} ثانیه...")
+                time.sleep(5 * (attempt + 1))
+            except requests.exceptions.ConnectionError as e:
+                print(f"🌐 خطای اتصال: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+                    continue
+                return None
+            except Exception as e:
+                print(f"❌ خطا: {str(e)}")
+                if attempt < max_retries - 1:
+                    time.sleep(3)
+                    continue
+                return None
+        
+        print("❌ خطا در دریافت اطلاعات از وبسایت (تمام تلاش‌ها ناکام)")
+        return None
     
     def get_last_entry(self):
         """آخرین ردیف از فایل CSV را بازمی‌گرداند"""
@@ -183,11 +239,7 @@ class USD2RialsUpdater:
             return 0
 
     def regenerate_json_files(self, pretty_path: str = "USD2Rials.json", min_path: str = "USD2Rials.min.json") -> tuple[bool, int]:
-        """از روی CSV دو خروجی JSON تولید می‌کند:
-        1) فایل غیر فشرده شامل تمام ستون‌ها به صورت آرایه‌ای از آبجکت‌ها
-        2) فایل مینیمال به صورت [["YYYY-MM-DD", price], ...]
-        برمی‌گرداند: (موفقیت, تعداد ردیف‌ها)
-        """
+        """از روی CSV دو خروجی JSON تولید می‌کند"""
         try:
             full_rows = []
             min_rows = []
@@ -230,7 +282,7 @@ class USD2RialsUpdater:
             return False, 0
     
     def update_readme(self, latest_data, last_entry=None, csv_row_count=0):
-        """فایل README را با آخرین اطلاعات به‌روزرسانی می‌کند (RTL + راست‌چین)"""
+        """فایل README را با آخرین اطلاعات به‌روزرسانی می‌کند"""
         try:
             # محاسبه تغییر قیمت
             current_price = latest_data['price_avg']
@@ -256,16 +308,14 @@ class USD2RialsUpdater:
   <hr />
 
   <h2>🔍 درباره مخزن</h2>
-  <p>این مخزن حاوی اطلاعات تاریخچه قیمت دلار آمریکا به ریال ایران است که به صورت خودکار و روزانه از سایت <strong>tgju.org</strong> جمع‌آوری می‌شود.</p>
+  <p>این مخزن حاوی اطلاعات تاریخچه قیمت دلار آمریکا به ریال ایران است که به صورت خودکار و روزانه از سایت <strong>tgju.org</strong> به‌روزرسانی می‌شود.</p>
   <p>داده‌ها از تاریخ ۷ مهرماه ۱۳۶۰ تا به امروز هستند.</p>
-  <p>داده‌های اولیه این مخزن از سایت <a href="https://d-learn.ir/usd-price/">مدرسه دقیقه</a> برداشته شده‌است و به صورت دوره‌ای این داده‌ در همین لینک بارگذاری می‌شود.</p>
 
   <h3>📋 توضیحات و فرایند:</h3>
   <ul>
     <li><strong>به‌روزرسانی خودکار</strong>: هر روز ساعت ۱۱:۰۰ صبح به وقت تهران</li>
     <li><strong>تاریخ دوگانه</strong>: شامل تاریخ شمسی و میلادی</li>
     <li><strong>قیمت میانگین</strong>: محاسبه شده از کمترین و بیشترین قیمت روز</li>
-    <li><strong>نمایش تغییرات</strong>: مقایسه با روز قبل همراه با نشانگر در مخزن</li>
   </ul>
 
   <h3>📊 ساختار داده‌ها:</h3>
@@ -294,11 +344,9 @@ class USD2RialsUpdater:
     def is_first_day_of_persian_month(self, persian_date: str) -> bool:
         """بررسی می‌کند که آیا تاریخ شمسی روز اول ماه است یا نه"""
         try:
-            # فرمت تاریخ شمسی معمولاً به صورت "۱۴۰۳/۰۶/۰۱" است
             parts = persian_date.replace('/', ' ').replace('-', ' ').split()
             if len(parts) >= 3:
                 day = parts[2].strip()
-                # تبدیل اعداد فارسی به انگلیسی
                 persian_to_english = str.maketrans('۰۱۲۳۴۵۶۷۸۹', '0123456789')
                 day_english = day.translate(persian_to_english)
                 return day_english == '01' or day_english == '1'
@@ -315,27 +363,22 @@ class USD2RialsUpdater:
                 print("⚠️ GITHUB_TOKEN تنظیم نشده است")
                 return False
             
-            # تولید نام تگ با فرمت تاریخ میلادی و شمسی
             gregorian_date = latest_data['date_gr']
             persian_date = latest_data['date_pr']
             
-            # تبدیل تاریخ میلادی به فرمت YYYYMMDD
             try:
                 dt = datetime.strptime(gregorian_date, "%m/%d/%Y")
                 gregorian_formatted = dt.strftime("%Y%m%d")
             except:
                 gregorian_formatted = gregorian_date.replace('/', '')
             
-            # تبدیل تاریخ شمسی به فرمت YYYYMMDD
             persian_formatted = persian_date.replace('/', '').replace('-', '')
-            
             tag_name = f"{gregorian_formatted}-{persian_formatted}"
             release_name = f"به‌روزرسانی {persian_date} - {gregorian_date}"
             
             release_body = f"""به‌روزرسانی شده تا {persian_date} - {gregorian_date}
 تعداد ردیف: {csv_row_count:,}"""
             
-            # ایجاد release با GitHub CLI
             cmd = [
                 'gh', 'release', 'create', tag_name,
                 '--title', release_name,
@@ -371,7 +414,6 @@ class USD2RialsUpdater:
             message = f"""به‌روزرسانی تا {latest_data['date_pr']} - {latest_data['date_gr']}
 تعداد ردیف‌های CSV: {csv_row_count:,}"""
             
-            # ارسال پیام متنی
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             data = {
                 'chat_id': chat_id,
@@ -383,9 +425,7 @@ class USD2RialsUpdater:
                 print(f"خطا در ارسال پیام تلگرام: {response.text}")
                 return False
             
-            # ارسال فایل CSV
             url_doc = f"https://api.telegram.org/bot{bot_token}/sendDocument"
-            
             files_to_send = ['USD2Rials.csv', 'USD2Rials.json']
             
             for file_path in files_to_send:
