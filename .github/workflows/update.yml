@@ -51,3 +51,5 @@ jobs:
             git commit -m "daily update done"
             git push
           fi
+        - name: Debug scraping
+          run: python debug_scrape.py
