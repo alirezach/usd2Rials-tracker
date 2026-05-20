@@ -105,9 +105,18 @@ class USD2RialsUpdater:
         try:
             jy, jm, jd = int(parts[0]), int(parts[1]), int(parts[2])
             gy, gm, gd = self.jalali_to_gregorian(jy, jm, jd)
-            return f"{gy}/{gm:02d}/{gd:02d}"
+            return f"{gy}/{gm}/{gd}"
         except Exception:
             return ""
+
+    def parse_gregorian_date(self, date_str: str):
+        if not date_str:
+            return None
+        norm = self.normalize_gregorian_date(date_str)
+        try:
+            return datetime.strptime(norm, "%m/%d/%Y")
+        except Exception:
+            return None
 
     def fetch_latest_price(self, max_retries=3):
         """از وبسایت tgju آخرین قیمت دلار را دریافت می‌کند"""
@@ -224,7 +233,20 @@ class USD2RialsUpdater:
         """بررسی می‌کند که آیا داده جدید است یا نه"""
         if not last_entry:
             return True
-        return new_data['date_pr'] != last_entry['date_pr']
+
+        new_date = self.parse_gregorian_date(new_data.get('date_gr', ''))
+        last_date = self.parse_gregorian_date(last_entry.get('date_gr', ''))
+
+        if new_date and last_date:
+            return new_date > last_date
+
+        if new_data.get('date_pr') == last_entry.get('date_pr'):
+            return False
+
+        if new_data.get('date_gr') == last_entry.get('date_gr'):
+            return False
+
+        return True
     
     def append_to_csv(self, new_data):
         """داده جدید را به فایل CSV اضافه می‌کند"""
@@ -239,7 +261,12 @@ class USD2RialsUpdater:
                 if not file_exists:
                     writer.writeheader()
                 
-                writer.writerow(new_data)
+                writer.writerow({
+                    'date_pr': new_data['date_pr'],
+                    'date_gr': new_data['date_gr'],
+                    'source': new_data['source'],
+                    'price_avg': f"{new_data['price_avg']:,}"
+                })
             return True
         except Exception as e:
             print(f"خطا در نوشتن در فایل CSV: {str(e)}")
@@ -250,7 +277,12 @@ class USD2RialsUpdater:
         if not previous_price:
             return 0, ""
         
-        change = current_price - int(previous_price)
+        try:
+            previous_price_value = int(str(previous_price).replace(',', ''))
+        except Exception:
+            previous_price_value = 0
+
+        change = current_price - previous_price_value
         if change > 0:
             return change, "↗️"
         elif change < 0:
@@ -548,12 +580,13 @@ class USD2RialsUpdater:
             print("ℹ️ داده جدیدی برای اضافه کردن وجود ندارد")
             # حتی اگر داده جدید نباشد، README و JSONها را به‌روزرسانی کن
             json_success, csv_row_count = self.regenerate_json_files()
-            self.update_readme(latest_data, last_entry, csv_row_count)
+            display_data = last_entry if last_entry else latest_data
+            self.update_readme(display_data, last_entry, csv_row_count)
             
             # بررسی روز اول ماه شمسی برای ارسال تلگرام (حتی اگر داده جدید نباشد)
-            if self.is_first_day_of_persian_month(latest_data['date_pr']):
+            if self.is_first_day_of_persian_month(display_data['date_pr']):
                 print("📅 روز اول ماه شمسی تشخیص داده شد - ارسال پیام تلگرام")
-                self.send_telegram_message(latest_data, csv_row_count)
+                self.send_telegram_message(display_data, csv_row_count)
             
             return True
 
