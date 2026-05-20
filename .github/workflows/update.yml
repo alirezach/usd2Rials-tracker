@@ -2,7 +2,7 @@ name: Update USD Price
 
 on:
   schedule:
-    - cron: '30 7 * * *'  # 11:00 Asia/Tehran (UTC+3:30/4:30) -> using 05:30 UTC approximates 09:00 during DST
+    - cron: '30 18 * * *'  # 23:00 Asia/Tehran during Iranian DST (UTC+4:30)
   workflow_dispatch:
 
 env:
@@ -51,5 +51,6 @@ jobs:
             git commit -m "daily update done"
             git push
           fi
-        - name: Debug scraping
-          run: python debug_scrape.py
+
+      - name: Debug scraping
+        run: python debug_scrape.py

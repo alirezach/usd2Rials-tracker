@@ -15,7 +15,7 @@ import time
 class USD2RialsUpdater:
     def __init__(self, csv_file_path="USD2Rials.csv"):
         self.csv_file_path = csv_file_path
-        self.url = "https://www.tgju.org/profile/price_dollar_rl/history"
+        self.url = "https://www.tgju.org/profile/price_dollar_rl"
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -55,84 +55,136 @@ class USD2RialsUpdater:
             return f"{parsed.month}/{parsed.day}/{parsed.year}"
         return date_str
 
+    def persian_digits_to_english(self, text: str) -> str:
+        translator = str.maketrans('۰۱۲۳۴۵۶۷۸۹', '0123456789')
+        return text.translate(translator)
+
+    def jalali_to_gregorian(self, jy: int, jm: int, jd: int) -> tuple[int, int, int]:
+        jy += 1595
+        days = -355668 + 365 * jy + (jy // 33) * 8 + ((jy % 33 + 3) // 4)
+        if jm < 7:
+            days += (jm - 1) * 31
+        else:
+            days += 6 * 31 + (jm - 7) * 30
+        days += jd - 1
+
+        gy = 400 * (days // 146097)
+        days %= 146097
+        if days > 36524:
+            gy += 100 * ((days - 1) // 36524)
+            days = (days - 1) % 36524
+            if days >= 365:
+                days += 1
+
+        gy += 4 * (days // 1461)
+        days %= 1461
+        if days > 365:
+            gy += (days - 1) // 365
+            days = (days - 1) % 365
+
+        gd = days + 1
+        months = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        leap = (gy % 400 == 0) or (gy % 4 == 0 and gy % 100 != 0)
+        if leap:
+            months[2] = 29
+
+        gm = 1
+        while gm <= 12 and gd > months[gm]:
+            gd -= months[gm]
+            gm += 1
+
+        return gy, gm, gd
+
+    def persian_to_gregorian(self, persian_date: str) -> str:
+        if not persian_date:
+            return ""
+        norm = self.persian_digits_to_english(persian_date.strip())
+        parts = re.split(r'[/-]', norm)
+        if len(parts) != 3:
+            return ""
+        try:
+            jy, jm, jd = int(parts[0]), int(parts[1]), int(parts[2])
+            gy, gm, gd = self.jalali_to_gregorian(jy, jm, jd)
+            return f"{gy}/{gm:02d}/{gd:02d}"
+        except Exception:
+            return ""
+
     def fetch_latest_price(self, max_retries=3):
         """از وبسایت tgju آخرین قیمت دلار را دریافت می‌کند"""
         for attempt in range(max_retries):
             try:
                 print(f"تلاش {attempt + 1}/{max_retries} برای دریافت از {self.url}")
                 response = requests.get(self.url, headers=self.headers, timeout=15)
-                
+
                 print(f"📡 Status Code: {response.status_code}")
-                
+
                 if response.status_code == 404:
                     print("❌ 404 - صفحه پیدا نشد")
-                    if attempt == max_retries - 1:
-                        print("🔄 تلاش URL جایگزین...")
-                        self.url = "https://www.tgju.org/chart/price_dollar_rl/trading"
+                    if attempt < max_retries - 1:
+                        print(f"⏳ صبر 5 ثانیه...")
+                        time.sleep(5)
                         continue
+                    raise ValueError("صفحه مورد نظر یافت نشد")
                 elif response.status_code == 403:
                     print("❌ 403 - دسترسی رد شد")
                     if attempt < max_retries - 1:
                         print(f"⏳ صبر 5 ثانیه...")
                         time.sleep(5)
                         continue
-                
+
                 response.raise_for_status()
-                
+
                 soup = BeautifulSoup(response.content, 'html.parser')
-                
-                # پیدا کردن جدول تاریخچه قیمت
-                table = soup.find('table', {'class': 'table widgets-dataTable table-hover text-center history-table'})
+
+                # پیدا کردن جدول تاریخچه قیمت بر اساس ستون‌های فعلی
+                table = None
+                for candidate in soup.find_all('table'):
+                    headers = [th.get_text(strip=True) for th in candidate.find_all('th')]
+                    if {'تاریخ', 'کمترین', 'بیشترین'} <= set(headers):
+                        table = candidate
+                        break
+
                 if not table:
-                    # جستجوی جایگزین
-                    tables = soup.find_all('table', {'class': re.compile(r'.*history-table.*')})
-                    if tables:
-                        table = tables[0]
-                        print(f"✅ جدول با regex پیدا شد")
-                    else:
-                        raise ValueError("جدول قیمت در وبسایت پیدا نشد")
-                
+                    raise ValueError("جدول قیمت در وبسایت پیدا نشد")
+
                 tbody = table.find('tbody')
                 if not tbody:
                     raise ValueError("tbody در جدول پیدا نشد")
-                
+
                 # پیدا کردن اولین ردیف داده (بدون هدر)
                 first_row = tbody.find('tr')
                 if not first_row:
                     raise ValueError("هیچ ردیف داده‌ای در جدول پیدا نشد")
-                
+
                 cells = first_row.find_all('td')
-                if len(cells) < 8:
-                    print(f"⚠️ تعداد ستون‌ها: {len(cells)} (انتظار ≥8)")
+                if len(cells) < 4:
+                    print(f"⚠️ تعداد ستون‌ها: {len(cells)} (انتظار ≥4)")
                     for i, cell in enumerate(cells):
                         print(f"  ستون {i}: {cell.get_text(strip=True)[:50]}")
                     raise ValueError(f"تعداد ستون‌های کافی پیدا نشد ({len(cells)})")
-                
-                # استخراج داده‌ها از ردیف اول
-                min_price_text = cells[1].get_text(strip=True)
-                max_price_text = cells[2].get_text(strip=True)
-                raw_gregorian_date = cells[6].get_text(strip=True)
-                gregorian_date = self.normalize_gregorian_date(raw_gregorian_date)
-                persian_date = cells[7].get_text(strip=True)
-                
+
+                persian_date = cells[0].get_text(strip=True)
+                min_price_text = cells[2].get_text(strip=True)
+                max_price_text = cells[3].get_text(strip=True)
+                gregorian_date = self.persian_to_gregorian(persian_date)
+
                 print(f"✅ داده استخراج شد:")
                 print(f"   تاریخ شمسی: {persian_date}")
                 print(f"   تاریخ میلادی: {gregorian_date}")
                 print(f"   کمترین: {min_price_text}")
                 print(f"   بیشترین: {max_price_text}")
-                
-                # تبدیل قیمت‌ها به عدد
+
                 min_price = int(min_price_text.replace(',', ''))
                 max_price = int(max_price_text.replace(',', ''))
                 avg_price = (min_price + max_price) // 2
-                
+
                 return {
                     'date_pr': persian_date,
                     'date_gr': gregorian_date,
                     'source': 'tgju',
                     'price_avg': avg_price
                 }
-                
+
             except requests.exceptions.Timeout:
                 print(f"⏱️ Timeout - صبر {5 * (attempt + 1)} ثانیه...")
                 time.sleep(5 * (attempt + 1))
