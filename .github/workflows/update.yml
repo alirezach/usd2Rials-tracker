@@ -5,6 +5,9 @@ on:
     - cron: '30 7 * * *'  # 11:00 Asia/Tehran (UTC+3:30/4:30) -> using 05:30 UTC approximates 09:00 during DST
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   update:
     runs-on: ubuntu-latest
