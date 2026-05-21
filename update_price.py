@@ -400,8 +400,8 @@ class USD2RialsUpdater:
 <div dir="rtl" align="right">
     <h1>آرشیو قیمت دلار به ریال</h1>
 
-    <h2>📊 آخرین اطلاعات</h2>
-    <p><strong>آخرین به‌روزرسانی:</strong> {latest_data['date_pr']} | <strong>قیمت ثبت شده:</strong> {self.format_price(latest_data.get('price_avg', ''))} ریال {arrow}</p>
+  <h2>📊 آخرین اطلاعات</h2>
+  <p><strong>آخرین به‌روزرسانی:</strong> {latest_data['date_pr']} | <strong>قیمت ثبت شده:</strong> {self.format_price(latest_data.get('price_avg', ''))} ریال {arrow}</p>
 """
             
             if price_change != 0:
