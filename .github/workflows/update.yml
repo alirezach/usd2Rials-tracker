@@ -54,5 +54,4 @@ jobs:
             git push
           fi
 
-      - name: Debug scraping
-        run: python debug_scrape.py
+      # Debug scraping step removed to avoid extra network calls in CI
