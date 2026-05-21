@@ -276,13 +276,26 @@ class USD2RialsUpdater:
         """محاسبه تغییر قیمت و جهت آن"""
         if not previous_price:
             return 0, ""
-        
+
+        # normalize current price
+        try:
+            current_price_value = int(str(current_price).replace(',', ''))
+        except Exception:
+            try:
+                current_price_value = int(current_price)
+            except Exception:
+                current_price_value = 0
+
+        # normalize previous price
         try:
             previous_price_value = int(str(previous_price).replace(',', ''))
         except Exception:
-            previous_price_value = 0
+            try:
+                previous_price_value = int(previous_price)
+            except Exception:
+                previous_price_value = 0
 
-        change = current_price - previous_price_value
+        change = current_price_value - previous_price_value
         if change > 0:
             return change, "↗️"
         elif change < 0:
@@ -308,6 +321,14 @@ class USD2RialsUpdater:
             except Exception:
                 pass
         return ""
+
+    def format_price(self, value) -> str:
+        """Return integer-like price as string with thousand separators."""
+        try:
+            v = int(str(value).replace(',', ''))
+            return f"{v:,}"
+        except Exception:
+            return str(value)
 
     def get_csv_row_count(self) -> int:
         """تعداد ردیف‌های CSV را برمی‌گرداند (بدون هدر)"""
@@ -377,13 +398,14 @@ class USD2RialsUpdater:
             # ایجاد محتوای HTML راست‌به‌چپ برای GitHub
             readme_content = f"""
 <div dir="rtl" align="right">
-  <h1>آرشیو قیمت دلار به ریال</h1>
+    <h1>آرشیو قیمت دلار به ریال</h1>
 
-  <h2>📊 آخرین اطلاعات</h2>
-  <p><strong>آخرین به‌روزرسانی:</strong> {latest_data['date_pr']} | <strong>قیمت ثبت شده:</strong> {latest_data['price_avg']:,} ریال {arrow}</p>
+    <h2>📊 آخرین اطلاعات</h2>
+    <p><strong>آخرین به‌روزرسانی:</strong> {latest_data['date_pr']} | <strong>قیمت ثبت شده:</strong> {self.format_price(latest_data.get('price_avg', ''))} ریال {arrow}</p>
 """
             
             if price_change != 0:
+                # price_change is an int
                 readme_content += f"  <p><strong>تغییر نسبت به روز قبل:</strong> {price_change:+,} ریال</p>\n"
             
             # اضافه کردن تعداد ردیف‌های CSV
