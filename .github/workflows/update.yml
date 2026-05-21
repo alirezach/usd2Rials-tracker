@@ -49,6 +49,8 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "daily update done"
+            # integrate remote changes first to avoid non-fast-forward errors
+            git pull --rebase origin main || true
             git push
           fi
 
