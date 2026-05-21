@@ -49,9 +49,6 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "daily update done"
-            # integrate remote changes first to avoid non-fast-forward errors
-            git pull --rebase origin main || true
+            git pull --rebase origin main
             git push
           fi
-
-      # Debug scraping step removed to avoid extra network calls in CI
