@@ -371,7 +371,8 @@ class USD2RialsUpdater:
             # محاسبه تغییر قیمت
             current_price = latest_data['price_avg']
             previous_price = last_entry['price_avg'] if last_entry else None
-            price_change, arrow = self.calculate_price_change(current_price, int(previous_price) if previous_price else None)
+            # calculate_price_change handles comma-formatted strings, don't cast to int here
+            price_change, arrow = self.calculate_price_change(current_price, previous_price)
             
             # ایجاد محتوای HTML راست‌به‌چپ برای GitHub
             readme_content = f"""
@@ -463,6 +464,13 @@ class USD2RialsUpdater:
             release_body = f"""به‌روزرسانی شده تا {persian_date} - {gregorian_date}
 تعداد ردیف: {csv_row_count:,}"""
             
+            # if a release with the same tag already exists, skip creating
+            check_cmd = ['gh', 'release', 'view', tag_name]
+            check = subprocess.run(check_cmd, capture_output=True, text=True, encoding='utf-8')
+            if check.returncode == 0:
+                print(f"ℹ️ GitHub Release {tag_name} already exists; skipping creation")
+                return True
+
             cmd = [
                 'gh', 'release', 'create', tag_name,
                 '--title', release_name,
@@ -471,9 +479,9 @@ class USD2RialsUpdater:
                 'USD2Rials.json',
                 'USD2Rials.min.json'
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8')
-            
+
             if result.returncode == 0:
                 print(f"✅ GitHub Release {tag_name} با موفقیت ایجاد شد")
                 return True
