@@ -54088,5 +54088,11 @@
     "date_gr": "2026/11/1",
     "source": "tgju",
     "price_avg": 2723800
+  },
+  {
+    "date_pr": "1405/08/12",
+    "date_gr": "2026/11/2",
+    "source": "tgju",
+    "price_avg": 2725000
   }
 ]
